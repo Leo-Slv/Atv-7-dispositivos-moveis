@@ -140,9 +140,26 @@ class CalendarService {
     final w = window();
     final calendars = await _gateway.calendars();
     final all = <Appointment>[];
-    for (final c in calendars) {
-      all.addAll(await _gateway.events(c, w.start, w.end));
+    if (calendars.isEmpty) {
+      throw CalendarQueryException(
+        'Nenhum calendário encontrado no dispositivo. Adicione uma conta '
+        '(ex.: Google) ou crie um calendário no app de Agenda.',
+      );
     }
+    CalendarQueryException? lastError;
+    var failed = 0;
+    for (final c in calendars) {
+      try {
+        all.addAll(await _gateway.events(c, w.start, w.end));
+      } catch (e) {
+        // Um calendário com problema não deve esconder os demais.
+        failed++;
+        lastError = e is CalendarQueryException
+            ? e
+            : CalendarQueryException(e.toString());
+      }
+    }
+    if (failed == calendars.length && lastError != null) throw lastError;
     // Garante que só entram eventos que intersectam a janela.
     final inWindow =
         all.where((a) => a.start.isBefore(w.end) && !a.end.isBefore(w.start))

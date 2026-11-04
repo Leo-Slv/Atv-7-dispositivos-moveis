@@ -12,9 +12,11 @@ class FakeGateway implements CalendarGateway {
     this.byCal = const {},
     this.fail = false,
     this.delay = Duration.zero,
+    this.failCals = const {},
   });
   bool has, grant, fail;
   Duration delay;
+  Set<String> failCals;
   List<CalendarSource> cals;
   Map<String, List<Appointment>> byCal;
   int requested = 0;
@@ -36,8 +38,10 @@ class FakeGateway implements CalendarGateway {
 
   @override
   Future<List<Appointment>> events(
-          CalendarSource c, DateTime s, DateTime e) async =>
-      byCal[c.id] ?? [];
+          CalendarSource c, DateTime s, DateTime e) async {
+    if (failCals.contains(c.id)) throw CalendarQueryException('ruim ${c.id}');
+    return byCal[c.id] ?? [];
+  }
 }
 
 final now = DateTime(2026, 11, 3, 10, 0);
@@ -100,6 +104,20 @@ void main() {
     final r = await svc(g).fetch();
     expect(g.requested, 1);
     expect(r.status, QueryStatus.denied);
+  });
+
+  test('sem calendarios no aparelho lanca erro explicativo', () async {
+    expect(svc(FakeGateway()).fetch(), throwsA(isA<CalendarQueryException>()));
+  });
+
+  test('falha em um calendario nao esconde os demais', () async {
+    final g = FakeGateway(
+      cals: const [CalendarSource(id: '1', name: 'A'), CalendarSource(id: '2', name: 'B')],
+      failCals: {'1'},
+      byCal: {'2': [ap('ok', DateTime(2026, 11, 4, 9))]},
+    );
+    final r = await svc(g).fetch();
+    expect(r.appointments.map((a) => a.title), ['ok']);
   });
 
   testWidgets('estado inicial mostra o botao', (t) async {
