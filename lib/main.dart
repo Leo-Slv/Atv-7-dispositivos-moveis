@@ -1,122 +1,212 @@
 import 'package:flutter/material.dart';
 
-void main() {
-  runApp(const MyApp());
-}
+import 'models/appointment.dart';
+import 'services/calendar_service.dart';
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+void main() => runApp(const AgendaApp());
 
-  // This widget is the root of your application.
+class AgendaApp extends StatelessWidget {
+  const AgendaApp({super.key, this.service});
+
+  /// Permite injetar um serviço falso nos testes.
+  final CalendarService? service;
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      title: 'Compromissos',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
+      home: HomePage(service: service ?? CalendarService(DeviceCalendarGateway())),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+enum UiState { idle, loading, denied, empty, error, success }
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class HomePage extends StatefulWidget {
+  const HomePage({super.key, required this.service});
+  final CalendarService service;
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<HomePage> createState() => _HomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _HomePageState extends State<HomePage> {
+  UiState _state = UiState.idle;
+  List<Appointment> _items = const [];
+  String _error = '';
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  Future<void> _query() async {
+    setState(() => _state = UiState.loading);
+    try {
+      final r = await widget.service.fetch();
+      if (!mounted) return;
+      setState(() {
+        switch (r.status) {
+          case QueryStatus.denied:
+            _state = UiState.denied;
+          case QueryStatus.empty:
+            _state = UiState.empty;
+          case QueryStatus.success:
+            _items = r.appointments;
+            _state = UiState.success;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _state = UiState.error;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    final loading = _state == UiState.loading;
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+      appBar: AppBar(title: const Text('Compromissos (próximos 7 dias)')),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: loading ? null : _query,
+                icon: const Icon(Icons.event),
+                label: const Text('Consultar compromissos'),
+              ),
             ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+          ),
+          Expanded(child: _body()),
+        ],
       ),
     );
   }
+
+  Widget _body() {
+    switch (_state) {
+      case UiState.idle:
+        return const _Message(
+          icon: Icons.calendar_month,
+          text:
+              'Toque em "Consultar compromissos" para listar os eventos de hoje e dos próximos 6 dias.',
+        );
+      case UiState.loading:
+        return const Center(child: CircularProgressIndicator());
+      case UiState.denied:
+        return const _Message(
+          icon: Icons.lock,
+          text:
+              'Acesso ao calendário negado. Autorize a permissão e toque em "Consultar compromissos" novamente '
+              '(se necessário, habilite nas configurações do aplicativo).',
+        );
+      case UiState.empty:
+        return const _Message(
+          icon: Icons.event_busy,
+          text: 'Nenhum compromisso nos próximos 7 dias.',
+        );
+      case UiState.error:
+        return _Message(
+          icon: Icons.error_outline,
+          text: 'Falha ao consultar o calendário: $_error',
+        );
+      case UiState.success:
+        return ListView.separated(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          itemCount: _items.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 8),
+          itemBuilder: (_, i) => AppointmentCard(item: _items[i]),
+        );
+    }
+  }
+}
+
+class _Message extends StatelessWidget {
+  const _Message({required this.icon, required this.text});
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 48, color: Theme.of(context).colorScheme.outline),
+              const SizedBox(height: 12),
+              Text(text, textAlign: TextAlign.center),
+            ],
+          ),
+        ),
+      );
+}
+
+String _two(int n) => n.toString().padLeft(2, '0');
+String fmtDate(DateTime d) => '${_two(d.day)}/${_two(d.month)}/${d.year}';
+String fmtTime(DateTime d) => '${_two(d.hour)}:${_two(d.minute)}';
+
+/// Texto de período: início/fim com data e horário, ou "Dia inteiro".
+String periodText(Appointment a) {
+  if (a.allDay) {
+    final same = a.start.year == a.end.year &&
+        a.start.month == a.end.month &&
+        a.start.day == a.end.day;
+    return same
+        ? '${fmtDate(a.start)} · Dia inteiro'
+        : '${fmtDate(a.start)} a ${fmtDate(a.end)} · Dia inteiro';
+  }
+  return 'Início: ${fmtDate(a.start)} ${fmtTime(a.start)}\n'
+      'Fim: ${fmtDate(a.end)} ${fmtTime(a.end)}';
+}
+
+class AppointmentCard extends StatelessWidget {
+  const AppointmentCard({super.key, required this.item});
+  final Appointment item;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text(item.title, style: t.titleMedium)),
+                if (item.allDay)
+                  const Chip(
+                    label: Text('Dia inteiro'),
+                    visualDensity: VisualDensity.compact,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            _row(Icons.calendar_today, 'Calendário: ${item.calendarName}'),
+            _row(Icons.schedule, periodText(item)),
+            if (item.location != null) _row(Icons.place, 'Local: ${item.location}'),
+            if (item.description != null)
+              _row(Icons.notes, 'Descrição: ${item.description}'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _row(IconData icon, String text) => Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 16),
+            const SizedBox(width: 8),
+            Expanded(child: Text(text)),
+          ],
+        ),
+      );
 }
