@@ -1,0 +1,11 @@
+# Flutter via Docker (nada instalado no host).
+# Uso: docker compose run --rm flutter sh -c "flutter test"
+services:
+  flutter:
+    image: ghcr.io/cirruslabs/flutter:stable
+    working_dir: /app
+    volumes:
+      - .:/app
+      - pub-cache:/root/.pub-cache
+volumes:
+  pub-cache:
